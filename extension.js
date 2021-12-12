@@ -29,6 +29,13 @@ const SETTINGS_SCHEMA = 'org.gnome.shell.extensions.hotedge';
 const HOT_EDGE_PRESSURE_TIMEOUT = 1000; // ms
 const LOGGER = new Logger('HotEdge', SETTINGS_SCHEMA);
 
+const EDGE = {
+    Left: 'Left',
+    Top: 'Top',
+    Bottom: 'Bottom',
+    Right: 'Right'
+}
+
 
 function init() {
     return new Extension();
@@ -57,54 +64,35 @@ class Extension {
         
         Main.layoutManager._updateHotCorners();
     }
-    
+
     _onSettingsChange() {
         Main.layoutManager._updateHotCorners();
     }
     
     _updateHotEdges() {
-        LOGGER.info('Updating hot edges.');
+        LOGGER.debug('Updating hot edges for primary monitor');
         let pressureThreshold = this._settings.get_uint('pressure-threshold');
         let fallbackTimeout = this._settings.get_uint('fallback-timeout');
         let cornerDeadzone = this._settings.get_uint('corner-deadzone');
-        LOGGER.debug('pressureThreshold ' + pressureThreshold);
-        LOGGER.debug('fallbackTimeout ' + fallbackTimeout);
-        LOGGER.debug('cornerDeadzone ' + cornerDeadzone);
+        let leftHotedgeActive = this._settings.get_boolean('left-hotedge-active');
+        let rightHotedgeActive = this._settings.get_boolean('right-hotedge-active');
+        let bottomHotedgeActive = this._settings.get_boolean('bottom-hotedge-active');
         
-        // build new hot edges
-        for (let i = 0; i < Main.layoutManager.monitors.length; i++) {
-            let monitor = Main.layoutManager.monitors[i];
-            let leftX = monitor.x;
-            let rightX = monitor.x + monitor.width;
-            let bottomY = monitor.y + monitor.height;
-            let size = monitor.width;
-
-            let haveBottom = true;
-
-            // Check if we have a bottom.
-            // i.e. if there is no monitor directly below
-            for (let j = 0; j < Main.layoutManager.monitors.length; j++) {
-                if (i == j) {
-                    continue;
-                }
-                let otherMonitor = Main.layoutManager.monitors[j];
-                let otherLeftX = otherMonitor.x;
-                let otherRightX = otherMonitor.x + otherMonitor.width;
-                let otherTopY = otherMonitor.y;
-                if (otherTopY >= bottomY && otherLeftX < rightX && otherRightX > leftX) {
-                    haveBottom = false;
-                }
-            }
-
-            if (haveBottom) {
-                LOGGER.debug('Monitor ' + i + ' has a bottom, adding a hot edge.');
-                let edge = new HotEdge(Main.layoutManager, monitor, leftX, bottomY, pressureThreshold, fallbackTimeout, cornerDeadzone);
-                edge.setBarrierSize(size);
-                Main.layoutManager.hotCorners.push(edge);
-            } else {
-                LOGGER.debug('Monitor ' + i + ' does not have a bottom, not adding a hot edge.');
-                Main.layoutManager.hotCorners.push(null);
-            }
+        // build new hot edge for primary monitor only
+        let primaryMonitorIndex = Main.layoutManager.primaryIndex
+        let monitor = Main.layoutManager.monitors[primaryMonitorIndex];
+        let edge = null;
+        if (leftHotedgeActive) {
+            edge = new HotEdge(Main.layoutManager, monitor, EDGE.Left, pressureThreshold, fallbackTimeout, cornerDeadzone);
+            Main.layoutManager.hotCorners.push(edge);                    
+        }
+        if (bottomHotedgeActive) {
+            edge = new HotEdge(Main.layoutManager, monitor, EDGE.Bottom, pressureThreshold, fallbackTimeout, cornerDeadzone);
+            Main.layoutManager.hotCorners.push(edge);
+        }
+        if (rightHotedgeActive) {
+            edge = new HotEdge(Main.layoutManager, monitor, EDGE.Right, pressureThreshold, fallbackTimeout, cornerDeadzone);
+            Main.layoutManager.hotCorners.push(edge);
         }
     }
 }
@@ -112,13 +100,12 @@ class Extension {
 
 const HotEdge = GObject.registerClass(
 class HotEdge extends Clutter.Actor {
-    _init(layoutManager, monitor, x, y, pressureThreshold, fallbackTimeout, cornerDeadzone) {
-        LOGGER.debug('Creating hot edge x: ' + x + ' y: ' + y);
+    _init(layoutManager, monitor, edgePosition, pressureThreshold, fallbackTimeout, cornerDeadzone) {
+        LOGGER.debug('Creating hot edge');
         super._init();
 
         this._monitor = monitor;
-        this._x = x;
-        this._y = y;
+        this._edgePosition = edgePosition;
         this._fallbackTimeout = fallbackTimeout;
         this._cornerDeadzone = cornerDeadzone;
 
@@ -131,26 +118,83 @@ class HotEdge extends Clutter.Actor {
         this._pressureBarrier.connect('trigger', this._toggleOverview.bind(this));
 
         this.connect('destroy', this._onDestroy.bind(this));
+        this._setBarrierSize();
     }
 
-    setBarrierSize(size) {
+    _destroyBarrier() {
         if (this._barrier) {
             this._pressureBarrier.removeBarrier(this._barrier);
             this._barrier.destroy();
             this._barrier = null;
         }
+    }
 
-        if (size > 0) {
-            size = this._monitor.width - (2 * this._cornerDeadzone); // We always want the size to be the full width of the monitor, minus the corner deadzones (if any).
-            LOGGER.debug('Setting barrier size to ' + size);
-            this._barrier = new Meta.Barrier({ display: global.display,
-                                                       x1: this._x + this._cornerDeadzone, x2: this._x + this._cornerDeadzone + size, 
-                                                       y1: this._y, y2: this._y,
-                                                       directions: Meta.BarrierDirection.NEGATIVE_Y });
+    _setBarrierSize() {
+
+        this._destroyBarrier();
+
+        switch (this._edgePosition) {
+            case EDGE.Left:
+                this._barrier = this._createLeftBarrier();
+                break;
+            case EDGE.Bottom:
+                this._barrier = this._createBottomBarrier();
+                break;
+            case EDGE.Right:
+                this._barrier = this._createRightBarrier();
+                break;
+            default:
+                break;
+        }
+        if (this._barrier) {
             this._pressureBarrier.addBarrier(this._barrier);
         }
     }
 
+    _createLeftBarrier() {
+        let size = this._monitor.height - (2 * this._cornerDeadzone); // We always want the size to be the full height of the monitor, minus the corner dead-zones (if any).
+        let direction = Meta.BarrierDirection.POSITIVE_X;
+        let x1 = this._monitor.x;
+        let x2 = x1;
+        let y1 = this._monitor.y + this._cornerDeadzone;
+        let y2 = y1 + size;
+        LOGGER.debug('Setting barrier size to ' + size);
+        return new Meta.Barrier({ display: global.display,
+                                                   x1: x1, x2: x2, 
+                                                   y1: y1, y2: y2,
+                                                   directions: direction }); 
+    }
+
+    _createRightBarrier() {
+        let size = this._monitor.height - (2 * this._cornerDeadzone); // We always want the size to be the full height of the monitor, minus the corner dead-zones (if any).
+        let direction = Meta.BarrierDirection.NEGATIVE_X;
+        let x1 = this._monitor.x + this._monitor.width;
+        let x2 = x1;
+        let y1 = this._monitor.y + this._cornerDeadzone;
+        let y2 = y1 + size;
+        LOGGER.debug('Setting barrier size to ' + size);
+        return new Meta.Barrier({ display: global.display,
+                                                   x1: x1, x2: x2, 
+                                                   y1: y1, y2: y2,
+                                                   directions: direction }); 
+    }
+
+    _createBottomBarrier() {
+        let size = this._monitor.width - (2 * this._cornerDeadzone); // We always want the size to be the full width of the monitor, minus the corner dead-zones (if any).
+        let direction = Meta.BarrierDirection.NEGATIVE_Y;
+        let x1 = this._monitor.x + this._cornerDeadzone;
+        let x2 = x1 + size;
+        let y1 = this._monitor.y + this._monitor.height;
+        let y2 = y1;
+        LOGGER.debug('Setting barrier size to ' + size);
+        return new Meta.Barrier({ display: global.display,
+                                                   x1: x1, x2: x2, 
+                                                   y1: y1, y2: y2,
+                                                   directions: direction });
+    }
+
+
+    
     _setupFallbackEdgeIfNeeded(layoutManager) {
         if (!global.display.supports_extended_barriers()) {
             LOGGER.warn('Display does not support extended barriers, using fallback path.');
@@ -168,7 +212,7 @@ class HotEdge extends Clutter.Actor {
     }
 
     _onDestroy() {
-        this.setBarrierSize(0);
+        this._destroyBarrier();
         this._pressureBarrier.destroy();
         this._pressureBarrier = null;
     }

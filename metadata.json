@@ -1,8 +1,8 @@
 {
   "name": "Hot Edge",
-  "description": "Add a hot edge that activates the overview to the bottom of the screen. This minimizes the pointer travel required to access the dash when using the new GNOME Shell 40 overview layout.\n\nYou can find more documentation at https://github.com/jdoda/hotedge/blob/main/README.md and report issues at https://github.com/jdoda/hotedge/issues .",
-  "uuid": "hotedge@jonathan.jdoda.ca",
+  "description": "Add a hot edge that activates the overview. The hot edge can be added to the left, bottom or right side of the screen. On multi-monitor configurations, one hot edge is added to the primary monitor only.\n\nYou can find more documentation at https://github.com/mikejturner/hotedge/blob/main/README.md and report issues at https://github.com/mikejturner/hotedge/issues .",
+  "uuid": "hotedge@mikejturner",
   "version": 7,
   "shell-version": ["40", "41"],
-  "url": "https://github.com/jdoda/hotedge"
+  "url": "https://github.com/mikejturner/hotedge"
 }
